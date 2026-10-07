@@ -7,37 +7,71 @@ namespace SecureLab.Api.Scaffolding;
 
 public static class Lab02Endpoints
 {
+    private static string EscapeLike(string value) =>
+        value
+            .Replace("\\", "\\\\")
+            .Replace("%", "\\%")
+            .Replace("_", "\\_");
+
     public static void MapLab02Endpoints(this WebApplication app)
     {
+        // Безпечний параметризований пошук з для сортування
         app.MapGet("/api/incidents/search", async (
             string? q,
             string? sortBy,
             SecureLabDbContext db,
             CancellationToken ct) =>
         {
-            var orderClause = sortBy switch
+            var pattern = "%" + EscapeLike(q ?? "") + "%";
+
+            var found = db.Incidents
+                .AsNoTracking()
+                .Where(incident =>
+                    EF.Functions.ILike(incident.Title, pattern, "\\") ||
+                    EF.Functions.ILike(incident.Description, pattern, "\\"));
+
+            // Allowlist для sortBy з канонічними рангами за контрактом 2-A
+            IQueryable<Incident>? ordered = sortBy switch
             {
-                null or "" or "createdAtUtc" => "created_at_utc DESC",
-                _ => sortBy
+                null or "" or "createdAtUtc" => found
+                    .OrderByDescending(incident => incident.CreatedAtUtc)
+                    .ThenBy(incident => incident.Id),
+
+                "severity" => found
+                    .OrderBy(incident =>
+                        incident.Severity == IncidentSeverity.Critical ? 0 :
+                        incident.Severity == IncidentSeverity.High ? 1 :
+                        incident.Severity == IncidentSeverity.Medium ? 2 : 3)
+                    .ThenBy(incident => incident.Id),
+
+                "status" => found
+                    .OrderBy(incident =>
+                        incident.Status == IncidentStatus.New ? 0 :
+                        incident.Status == IncidentStatus.Triaged ? 1 :
+                        incident.Status == IncidentStatus.InProgress ? 2 :
+                        incident.Status == IncidentStatus.Resolved ? 3 : 4)
+                    .ThenBy(incident => incident.Id),
+
+                _ => null
             };
 
-            var sql =
-                "SELECT * FROM incidents WHERE title ILIKE '%" + (q ?? "") + "%' " +
-                "OR description ILIKE '%" + (q ?? "") + "%' " +
-                "ORDER BY " + orderClause + " LIMIT 50";
-
-            var items = await db.Incidents
-                .FromSqlRaw(sql)
-                .AsNoTracking()
-                .Select(incident => new
+            if (ordered is null)
+            {
+                return Results.ValidationProblem(new Dictionary<string, string[]>
                 {
+                    ["sortBy"] = ["Допустимі значення sortBy: createdAtUtc, severity, status."]
+                });
+            }
+
+            var items = await ordered
+                .Take(50)
+                .Select(incident => new IncidentSearchResultResponse(
                     incident.Id,
                     incident.Title,
                     incident.Description,
-                    Severity = incident.Severity.ToString(),
-                    Status = incident.Status.ToString(),
-                    incident.CreatedAtUtc
-                })
+                    incident.Severity.ToString(),
+                    incident.Status.ToString(),
+                    incident.CreatedAtUtc))
                 .ToListAsync(ct);
 
             return Results.Ok(items);
