@@ -1,0 +1,109 @@
+@baseUrl = http://localhost:5080
+### Звичайний пошук
+GET {{baseUrl}}/api/incidents/search?q=навчальн
+### Легітимний апостроф
+GET {{baseUrl}}/api/incidents/search?q=O%27Brien
+### Всі інциденти
+GET {{baseUrl}}/api/incidents
+
+### A. Звичайний пошук (USB перевірка встановлення, T-04)
+GET {{baseUrl}}/api/incidents/search?q=USB
+
+### B. Значення, якого немає
+GET {{baseUrl}}/api/incidents/search?q=zz-no-match
+
+### C. Єдиний дозволений контрольний ввід SQLi (S-01 до виправлення / S-02 після виправлення)
+GET {{baseUrl}}/api/incidents/search?q=zz-no-match%27%20OR%20TRUE%20--%20
+
+### D. Легітимний апостроф (O'Brien, T-04)
+GET {{baseUrl}}/api/incidents/search?q=O%27Brien
+
+### Позитивна регресія з кириличним словом і апострофом (комп'ютерного, T-04)
+GET {{baseUrl}}/api/incidents/search?q=%D0%BA%D0%BE%D0%BC%D0%BF%27%D1%8E%D1%82%D0%B5%D1%80%D0%BD%D0%BE%D0%B3%D0%BE
+
+### Буквальний пошук символу % (після виправлення має повернути [])
+GET {{baseUrl}}/api/incidents/search?q=%25
+
+### T-05. Невідоме значення sortBy поза allowlist (очікується 400 із ключем sortBy)
+GET {{baseUrl}}/api/incidents/search?sortBy=price
+
+### Сортування за createdAtUtc (за замовчуванням)
+GET {{baseUrl}}/api/incidents/search?sortBy=createdAtUtc
+
+### Сортування за severity (Critical -> High -> Medium -> Low)
+GET {{baseUrl}}/api/incidents/search?sortBy=severity
+
+### Сортування за status (New -> Triaged -> InProgress -> Resolved -> Closed)
+GET {{baseUrl}}/api/incidents/search?sortBy=status
+
+### T-06. Ресурс не знайдено (очікується 404 у Problem Details)
+GET {{baseUrl}}/api/incidents/99999999-9999-9999-9999-999999999999
+
+### T-01. Коректне створення інциденту (очікується 201 Created та CreatedIncidentResponse)
+POST {{baseUrl}}/api/incidents
+Content-Type: application/json
+
+{
+  "title": " Тестовий інцидент T-01 ",
+  "description": "Навчальний опис для перевірки успішного створення інциденту.",
+  "severity": "medium",
+  "occurredAtUtc": "2026-09-01T13:00:00+03:00"
+}
+
+### T-02. Некоректний DTO: порожній title, числове severity "7", дата в далекому майбутньому (очікується 400)
+POST {{baseUrl}}/api/incidents
+Content-Type: application/json
+
+{
+  "title": "   ",
+  "description": "Коректний опис",
+  "severity": "7",
+  "occurredAtUtc": "2099-01-01T00:00:00Z"
+}
+
+### T-09 (Негативний). Cross-field: High + 39 символів у description після Trim() (очікується 400, ключ description)
+POST {{baseUrl}}/api/incidents
+Content-Type: application/json
+
+{
+  "title": "Cross-field 39 chars test",
+  "description": "   012345678901234567890123456789012345678   ",
+  "severity": "High",
+  "occurredAtUtc": "2026-09-01T10:00:00Z"
+}
+
+### T-09 (Позитивний). Cross-field: High + 40 символів у description після Trim() (очікується 201 Created)
+POST {{baseUrl}}/api/incidents
+Content-Type: application/json
+
+{
+  "title": "Cross-field 40 chars test",
+  "description": "   0123456789012345678901234567890123456789   ",
+  "severity": "High",
+  "occurredAtUtc": "2026-09-01T10:00:00Z"
+}
+
+### T-03. Предметний конфлікт: повторний активний title зі штатного seed (очікується 409 Conflict)
+POST {{baseUrl}}/api/incidents
+Content-Type: application/json
+
+{
+  "title": "  Перевірка USB навчальної мережі  ",
+  "description": "Спроба створити другий активний інцидент з тим самим заголовком.",
+  "severity": "Low",
+  "occurredAtUtc": "2026-09-01T10:00:00Z"
+}
+
+### CP-01. Перевірка захисту від Overposting (зайві поля id, status, ownerUserId ігноруються)
+POST {{baseUrl}}/api/incidents
+Content-Type: application/json
+
+{
+  "title": "Overposting check incident",
+  "description": "Перевірка ігнорування server-managed полів.",
+  "severity": "Low",
+  "occurredAtUtc": "2026-09-01T10:00:00Z",
+  "id": "11111111-1111-1111-1111-111111111111",
+  "status": "Closed",
+  "ownerUserId": "99999999-9999-9999-9999-999999999999"
+}
