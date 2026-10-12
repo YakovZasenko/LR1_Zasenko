@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using SecureLab.Api.Data;
@@ -15,7 +16,6 @@ public static class Lab02Endpoints
 
     public static void MapLab02Endpoints(this WebApplication app)
     {
-        // Безпечний параметризований пошук з для сортування
         app.MapGet("/api/incidents/search", async (
             string? q,
             string? sortBy,
@@ -30,7 +30,6 @@ public static class Lab02Endpoints
                     EF.Functions.ILike(incident.Title, pattern, "\\") ||
                     EF.Functions.ILike(incident.Description, pattern, "\\"));
 
-            // Allowlist для sortBy з канонічними рангами за контрактом 2-A
             IQueryable<Incident>? ordered = sortBy switch
             {
                 null or "" or "createdAtUtc" => found
@@ -80,13 +79,19 @@ public static class Lab02Endpoints
         // Виправлений обробник POST /api/incidents (Контракт 2-A добрий рівень)
         app.MapPost("/api/incidents", async (
             CreateIncidentRequest request,
+            HttpContext httpContext,
             SecureLabDbContext db,
             CancellationToken ct) =>
         {
+            var ownerClaim = httpContext.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (!Guid.TryParse(ownerClaim, out var ownerUserId))
+            {
+                return Results.Problem(statusCode: StatusCodes.Status500InternalServerError);
+            }
+
             var now = DateTimeOffset.UtcNow;
             var errors = new Dictionary<string, string[]>();
 
-            // перевірка title: required та довжина до Trim <= 160
             if (string.IsNullOrWhiteSpace(request.Title))
             {
                 errors["title"] = ["Заголовок інциденту є обов'язковим."];
@@ -96,7 +101,6 @@ public static class Lab02Endpoints
                 errors["title"] = ["Заголовок інциденту не може перевищувати 160 символів."];
             }
 
-            // перевірка description: required та довжина до Trim <= 4000
             if (string.IsNullOrWhiteSpace(request.Description))
             {
                 errors["description"] = ["Опис інциденту є обов'язковим."];
@@ -106,7 +110,6 @@ public static class Lab02Endpoints
                 errors["description"] = ["Опис інциденту не може перевищувати 4000 символів."];
             }
 
-            // Перевірка severity: TryParse (без урахування регістру), Enum.IsDefined (блокує "7")
             var severityIsValid = Enum.TryParse<IncidentSeverity>(
                 request.Severity,
                 ignoreCase: true,
@@ -129,7 +132,6 @@ public static class Lab02Endpoints
             var title = request.Title?.Trim() ?? "";
             var description = request.Description?.Trim() ?? "";
 
-            // Якщо severity High або Critical, description після Trim() має містити щонайменше 40 символів
             if (severityIsValid
                 && (severity == IncidentSeverity.High || severity == IncidentSeverity.Critical)
                 && !errors.ContainsKey("description")
@@ -164,7 +166,7 @@ public static class Lab02Endpoints
                 Description = description,
                 Severity = severity,
                 Status = IncidentStatus.New,
-                OwnerUserId = DbSeeder.AliceId,
+                OwnerUserId = ownerUserId,
                 OccurredAtUtc = occurredAtUtc,
                 CreatedAtUtc = now,
                 UpdatedAtUtc = now
@@ -183,7 +185,7 @@ public static class Lab02Endpoints
                 incident.CreatedAtUtc);
 
             return Results.Created($"/api/incidents/{incident.Id}", response);
-        });
+        }).RequireAuthorization();
     }
 }
 

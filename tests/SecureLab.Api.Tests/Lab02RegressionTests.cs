@@ -13,6 +13,13 @@ public sealed class Lab02RegressionTests(SecureLabApiFactory factory)
 {
     private readonly HttpClient _client = factory.CreateClient();
 
+    // ЛР 3: POST /api/incidents захищено, тому запити створення йдуть через cookie-клієнт Alice.
+    private HttpClient? _authed;
+    private async Task<HttpClient> AuthedAsync() => _authed ??= await factory.LoginAsync(
+        "alice",
+        Environment.GetEnvironmentVariable("SeedUsers__Password")
+            ?? throw new InvalidOperationException("Set local SeedUsers__Password outside Git."));
+
     // T-02: Автоматичний тест відхилення некоректного DTO (порожній title, числове severity "7", дата в майбутньому)
     [Fact]
     public async Task Post_WithInvalidDto_Returns400ValidationProblemWithoutInternalDetails()
@@ -25,7 +32,7 @@ public sealed class Lab02RegressionTests(SecureLabApiFactory factory)
             occurredAtUtc = DateTimeOffset.UtcNow.AddMinutes(30)
         };
 
-        using var response = await _client.PostAsJsonAsync("/api/incidents", body);
+        using var response = await (await AuthedAsync()).PostAsJsonAsync("/api/incidents", body);
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
@@ -58,7 +65,7 @@ public sealed class Lab02RegressionTests(SecureLabApiFactory factory)
                 occurredAtUtc = DateTimeOffset.UtcNow.AddMinutes(-5)
             };
 
-            using var response39 = await _client.PostAsJsonAsync("/api/incidents", body39);
+            using var response39 = await (await AuthedAsync()).PostAsJsonAsync("/api/incidents", body39);
             Assert.Equal(HttpStatusCode.BadRequest, response39.StatusCode);
 
             var json39 = await response39.Content.ReadAsStringAsync();
@@ -74,7 +81,7 @@ public sealed class Lab02RegressionTests(SecureLabApiFactory factory)
                 occurredAtUtc = DateTimeOffset.UtcNow.AddMinutes(-5)
             };
 
-            using var response40 = await _client.PostAsJsonAsync("/api/incidents", body40);
+            using var response40 = await (await AuthedAsync()).PostAsJsonAsync("/api/incidents", body40);
             Assert.Equal(HttpStatusCode.Created, response40.StatusCode);
         }
         finally
@@ -102,10 +109,10 @@ public sealed class Lab02RegressionTests(SecureLabApiFactory factory)
 
         try
         {
-            using var firstResponse = await _client.PostAsJsonAsync("/api/incidents", body);
+            using var firstResponse = await (await AuthedAsync()).PostAsJsonAsync("/api/incidents", body);
             Assert.Equal(HttpStatusCode.Created, firstResponse.StatusCode);
 
-            using var secondResponse = await _client.PostAsJsonAsync("/api/incidents", body);
+            using var secondResponse = await (await AuthedAsync()).PostAsJsonAsync("/api/incidents", body);
             Assert.Equal(HttpStatusCode.Conflict, secondResponse.StatusCode);
             Assert.Equal("application/problem+json", secondResponse.Content.Headers.ContentType?.MediaType);
 
