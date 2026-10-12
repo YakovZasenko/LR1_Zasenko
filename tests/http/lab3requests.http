@@ -1,0 +1,244 @@
+@host = http://localhost:5080
+# Пароль seed-акаунтів (alice, bob, morgan, admin) = SeedUsers__Password. Не коміть реальний пароль у git.
+@password = 12345678Aa!
+
+
+############################################################
+# 1. РЕЄСТРАЦІЯ (T-01, T-02)
+############################################################
+
+### T-01: коректна реєстрація (очікується 201 Created, тіло: id, userName, displayName)
+POST {{host}}/api/auth/register
+Content-Type: application/json
+
+{
+  "userName": "student99",
+  "email": "student99@example.test",
+  "displayName": "Студент 99",
+  "password": "{{password}}"
+}
+
+### T-02: дублікат (очікується 409 Conflict, {"message":"Account already exists"})
+POST {{host}}/api/auth/register
+Content-Type: application/json
+
+{
+  "userName": "student99",
+  "email": "student99@example.test",
+  "displayName": "Студент 99",
+  "password": "{{password}}"
+}
+
+### T-02: слабкий пароль (очікується 400 Bad Request, {"message":"Registration failed","codes":[...]})
+POST {{host}}/api/auth/register
+Content-Type: application/json
+
+{
+  "userName": "student100",
+  "email": "student100@example.test",
+  "displayName": "Студент 100",
+  "password": "123"
+}
+
+### Валідація: занадто коротке ім'я та кривий email (очікується 400, ValidationProblem з userName і email)
+POST {{host}}/api/auth/register
+Content-Type: application/json
+
+{
+  "userName": "ab",
+  "email": "not-an-email",
+  "displayName": "Студент",
+  "password": "{{password}}"
+}
+
+### Валідація: бракує поля displayName (очікується 400, ключ displayName)
+POST {{host}}/api/auth/register
+Content-Type: application/json
+
+{
+  "userName": "student101",
+  "email": "student101@example.test",
+  "password": "{{password}}"
+}
+
+### Зайві поля role та id мають ігноруватися (очікується 201; потім увійди як student102 і /api/me покаже role Reporter)
+POST {{host}}/api/auth/register
+Content-Type: application/json
+
+{
+  "userName": "student102",
+  "email": "student102@example.test",
+  "displayName": "Студент 102",
+  "password": "{{password}}",
+  "role": "Administrator",
+  "id": "00000000-0000-0000-0000-000000000099"
+}
+
+############################################################
+# 2. АНОНІМНІ ЗАПИТИ (запускай ДО першого login)
+############################################################
+
+### A-01: /api/me без входу (очікується 401 Unauthorized, без Location і WWW-Authenticate)
+GET {{host}}/api/me
+
+### A-01: створення інциденту без входу (очікується 401)
+POST {{host}}/api/incidents
+Content-Type: application/json
+
+{
+  "title": "Anonymous attempt",
+  "description": "Анонімний запит не має створювати інцидент.",
+  "severity": "Low",
+  "occurredAtUtc": "2026-10-01T10:00:00Z"
+}
+
+### Старий дефект: header X-Demo-UserId без cookie (очікується 401, раніше було 200 з профілем Bob)
+GET {{host}}/api/me
+X-Demo-UserId: 10000000-0000-0000-0000-000000000002
+
+### session-check без cookie (очікується 401)
+GET {{host}}/api/auth/session-check
+
+############################################################
+# 3. LOGIN: відмови (A-07)
+############################################################
+
+### A-07: невідомий користувач (очікується 401, тіло ідентичне наступному)
+POST {{host}}/api/auth/login
+Content-Type: application/json
+
+{
+  "userName": "nobody",
+  "password": "{{password}}"
+}
+
+### A-07: невірний пароль (очікується 401, ідентичний попередньому, крім traceId)
+POST {{host}}/api/auth/login
+Content-Type: application/json
+
+{
+  "userName": "alice",
+  "password": "WrongPassword123!"
+}
+
+############################################################
+# 4. ALICE: вхід, профіль, чужий header (A-02, A-03)
+############################################################
+
+### Вхід Аліси (очікується 204 No Content + Set-Cookie)
+POST {{host}}/api/auth/login
+Content-Type: application/json
+
+{
+  "userName": "alice",
+  "password": "{{password}}"
+}
+
+### A-02: профіль (очікується 200, лише userId, userName, role; userName alice, role Reporter)
+GET {{host}}/api/me
+
+### A-03: cookie Alice + header Боба (очікується 200 і все одно профіль Alice)
+GET {{host}}/api/me
+X-Demo-UserId: 10000000-0000-0000-0000-000000000002
+
+### session-check після входу (очікується 204)
+GET {{host}}/api/auth/session-check
+
+############################################################
+# 5. BOB: створення інциденту, owner із principal (A-04, A-05)
+############################################################
+
+### Вхід Боба (очікується 204; cookie Alice замінюється cookie Bob)
+POST {{host}}/api/auth/login
+Content-Type: application/json
+
+{
+  "userName": "bob",
+  "password": "{{password}}"
+}
+
+### Профіль Боба (очікується 200, userName bob)
+GET {{host}}/api/me
+
+### A-04: створення без owner у JSON (очікується 201; owner = Bob)
+# @name createNoOwner
+POST {{host}}/api/incidents
+Content-Type: application/json
+
+{
+  "title": "A04 {{$guid}}",
+  "description": "Створено Бобом без поля власника у запиті.",
+  "severity": "Low",
+  "occurredAtUtc": "2026-10-01T10:00:00Z"
+}
+
+### Перевірка owner для A-04 (очікується 200, ownerDisplayName = "Боб Мельник")
+GET {{host}}/api/incidents/{{createNoOwner.response.body.$.id}}
+
+### A-05: підроблений ownerUserId = Alice (очікується 201; owner все одно Bob)
+# @name createForged
+POST {{host}}/api/incidents
+Content-Type: application/json
+
+{
+  "title": "A05 {{$guid}}",
+  "description": "Боб надсилає чужий ownerUserId Аліси.",
+  "severity": "Low",
+  "occurredAtUtc": "2026-10-01T10:00:00Z",
+  "ownerUserId": "10000000-0000-0000-0000-000000000001"
+}
+
+### Перевірка owner для A-05 (очікується 200, ownerDisplayName = "Боб Мельник", а не "Аліса Коваль")
+GET {{host}}/api/incidents/{{createForged.response.body.$.id}}
+
+### Валідація create (очікується 400: порожній title, severity "7", дата в майбутньому)
+POST {{host}}/api/incidents
+Content-Type: application/json
+
+{
+  "title": "   ",
+  "description": "Навчальний опис інциденту.",
+  "severity": "7",
+  "occurredAtUtc": "2099-01-01T00:00:00Z"
+}
+
+############################################################
+# 6. LOGOUT (A-06)
+############################################################
+
+### Logout (очікується 204 No Content + Set-Cookie, що видаляє cookie)
+POST {{host}}/api/auth/logout
+
+### A-06: профіль після logout (очікується 401)
+GET {{host}}/api/me
+
+### A-06: створення після logout (очікується 401)
+POST {{host}}/api/incidents
+Content-Type: application/json
+
+{
+  "title": "After logout",
+  "description": "Після виходу створення має бути заборонене.",
+  "severity": "Low",
+  "occurredAtUtc": "2026-10-01T10:00:00Z"
+}
+
+############################################################
+# 7. RATE LIMIT login (ручна перевірка)
+############################################################
+# 1) Зупини API. Задай в тому ж терміналі:
+#    $env:RateLimit__Login__PermitLimit = "3"
+#    $env:RateLimit__Login__WindowSeconds = "10"
+#    і запусти: dotnet run --project src/SecureLab.Api
+# 2) Натисни Send Request нижче 4 рази підряд (очікується 401, 401, 401, 429).
+# 3) Через 10 секунд знову 401.
+# 4) Прибери змінні й перезапусти API.
+
+### Невдалий вхід (для rate limit)
+POST {{host}}/api/auth/login
+Content-Type: application/json
+
+{
+  "userName": "nobody",
+  "password": "WrongPassword123!"
+}
