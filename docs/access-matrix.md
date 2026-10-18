@@ -1,12 +1,27 @@
-# Матриця доступу — робочий шаблон
+# Матриця контролю доступу (Baseline 2-A «Трекер інцидентів»)
 
-У початковому стані ЛР 1 автентифікації та авторизації ще немає. Не трактуйте
-цей файл як реалізовану політику. Заповніть і реалізуйте матрицю у ЛР 3–4.
+## Політика HTTP-відмов для чужих і недоступних ресурсів
 
-| Дія | Reporter | Analyst | Administrator | Власник ресурсу має значення? | Стан реалізації |
-|---|---:|---:|---:|---:|---|
-| Перегляд списку | TODO | TODO | TODO | TODO | Не реалізовано |
-| Перегляд деталей | TODO | TODO | TODO | Так | Не реалізовано |
-| Створення інциденту | TODO | TODO | TODO | Сервер призначає власника | Не реалізовано |
-| Зміна severity/status | Ні | TODO | TODO | TODO | Не реалізовано |
-| Перегляд internal comment | Ні | Так | TODO | Ні | Не реалізовано |
+* **Неавтентифікований запит (Анонім):** повертає `401 Unauthorized` без перенаправлення (no HTML redirect) на всіх захищених маршрутах (`/api/incidents`, `/api/incident-comments/{id}`).
+* **Чужий головний або дочірній ресурс (Горизонтальне розмежування):** обрано та послідовно застосовано **політику 404 Not Found** (`IncidentNotFound()` з `title: "Інцидент не знайдено"`). API не розрізняє для клієнта стани «ресурс не існує» та «ресурс належить іншому суб'єкту», що зменшує видимість та запобігає розкриттю факту існування чужих об'єктів за їх UUID. Відповіді для чужого та неіснуючого identifier мають однакові status (`404`), `Content-Type` (`application/problem+json`) і структуру тіла (відрізняються лише кореляційним полем `traceId`).
+* **Привілейована дія (`POST /api/incidents/{id}/triage` — Вертикальне розмежування):** при спробі виконання суб'єктом без ролі `Analyst` (зокрема `Reporter` або `Administrator`) повертається **`403 Forbidden`** та формується безпечна аудиторська подія `authorization.denied` зі спільним `traceId` без чутливих даних. Якщо користувач у ролі `Analyst` викликає перехід для інциденту, поточний статус якого не дорівнює `New`, повертається `409 Conflict`.
+
+## Матриця контролю доступу
+
+| Дія | Рівень | Анонім | Reporter | Analyst | Administrator | Власник ресурсу має значення? | Стан реалізації |
+|---|---|---|---|---|---|---|---|
+| Перегляд списку `GET /api/incidents` | добрий | deny, `401` | allow `200`: лише власні записи (`OwnerUserId == principal`) | allow `200`: усі записи для службового аналізу | deny: порожня множина (за принципом найменших привілеїв) | Так для `Reporter` | `IncidentEndpoints.GetListAsync`, `IncidentQueries.GetListAsync`; тест `A05_List_AsAlice_ReturnsOnlyOwnIncidents_AndExcludesBobResources` |
+| Пошук `GET /api/incidents/search` | відмінний (A-11) | не виконувалось (рівень «Добре») | не виконувалось (рівень «Добре») | не виконувалось (рівень «Добре») | не виконувалось (рівень «Добре») | Так для `Reporter` | Не входить до межі доброго рівня |
+| Зведення `GET /api/incidents/severity-summary` | відмінний (A-11) | deny, `401` | allow `200`: агрегація лише за власними інцидентами | allow `200`: агрегація за всіма інцидентами | deny: порожня множина | Так для `Reporter` | `IncidentEndpoints.GetSeveritySummaryAsync`, `IncidentQueries.GetSeveritySummaryAsync` |
+| Перегляд деталей `GET /api/incidents/{id}` | достатній: entry-контракт ЛР 5 | deny, `401` | owner: allow `200`; non-owner: deny `404` | allow `200` для аналізу інциденту (включно з internal comments) | deny `404` (немає явного дозволу в предметному правилі) | Так для `Reporter` | `IncidentEndpoints.GetDetailsAsync`, `IncidentQueries.GetDetailsAsync`; тести `A01`, `A02`, `A03`, `A03R`, `A10` |
+| Створення інциденту `POST /api/incidents` | успадкований baseline | deny, `401` | allow `201` for self (`OwnerUserId` береться з principal, статус `New`) | allow `201` for self | allow `201` for self | Сервер призначає власника з перевіреного principal | `Lab02Endpoints.cs` (успадковано з ЛР 3) |
+| Update content `PUT /api/incidents/{id}` | добрий | deny, `401` | owner: allow `204` (лише контентні поля `Title`, `Description`, `Severity`); non-owner: deny `404` | deny `404` (право читання для аналізу не дає права змінювати контент) | deny `404` | Так (дозволено виключно `Reporter`-власнику) | `IncidentEndpoints.UpdateAsync`, `IncidentOperations.Update`, `IncidentAuthorizationHandler`; тести `A02`, `A04`, `A08a` |
+| Delete `DELETE /api/incidents/{id}` | добрий | deny, `401` | owner: allow `204`; non-owner: deny `404` | deny `404` | deny `404` | Так (дозволено виключно `Reporter`-власнику) | `IncidentEndpoints.DeleteAsync`, `IncidentOperations.Delete`, `IncidentAuthorizationHandler`; тест `A04` |
+| Зміна статусу (Triage) `POST /api/incidents/{id}/triage` | добрий | deny, `401` | deny `403` + запис події аудиту `authorization.denied` | allow `204` лише для дозволеного переходу `New -> Triaged` (інакше `409 Conflict`) | deny `403` + запис події аудиту `authorization.denied` | Ні (визначається роллю `Analyst` та поточним статусом `New` у БД) | `IncidentEndpoints.TriageAsync`, `IncidentOperations.Triage`, `IncidentAuthorizationHandler`; тести `A06`, `A07`, `A09` |
+| Перегляд internal comment та дочірнього ресурсу `GET /api/incident-comments/{id}` | добрий | deny, `401` | allow `200` лише для публічного коментаря (`IsInternal == false`) до власного інциденту; для чужого або `IsInternal == true` — deny `404` | allow `200` для публічних та внутрішніх коментарів (`IsInternal == true`) | deny `404` | Ні для правила `IsInternal` (лише `Analyst`); для прямого читання коментаря `Reporter` перевіряється власник батьківського `Incident` | `IncidentEndpoints.GetCommentAsync`, проєкція в `IncidentQueries.GetDetailsAsync`; тест `A12` |
+| Export/audit | відмінний, якщо flow існує | deny | deny | deny | deny | Маршрут відсутній у поточному cumulative state | Flow не реалізований у baseline |
+
+## Захист непрямого доступу (Child Resource) та меж DTO
+
+* **Непрямий доступ (Indirect Object Access):** дочірній ресурс `IncidentComment` (маршрут `GET /api/incident-comments/{id}`) перевіряє право доступу до батьківського ресурсу `Incident` через навігаційну властивість `c.Incident.OwnerUserId == ownerId` у поєднанні з перевіркою ролі `Analyst` та прапорця `!c.IsInternal`.
+* **Межі DTO та Server-Managed State (A-08a):** контракт звичайного оновлення `UpdateIncidentRequest` приймає виключно `Title`, `Description` та `Severity`. Поля під керуванням сервера (`Id`, `OwnerUserId`, `Status`, `Role`, `CreatedAtUtc`, `UpdatedAtUtc`) відсутні в DTO та не можуть бути підмінені клієнтом (захист від Overposting).

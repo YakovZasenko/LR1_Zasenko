@@ -1,0 +1,56 @@
+﻿@host = http://localhost:5080
+@aliceIncidentId = 20000000-0000-0000-0000-000000000001
+@bobIncidentId = 20000000-0000-0000-0000-000000000002
+@aliceNewIncidentId = 20000000-0000-0000-0000-000000000003
+@bobCommentId = 30000000-0000-0000-0000-000000000002
+@internalCommentId = 30000000-0000-0000-0000-000000000003
+
+### 1. Login as Alice (Reporter)
+POST {{host}}/api/auth/login
+Content-Type: application/json
+
+{
+  "userName": "alice",
+  "password": "{{$processEnv SeedUsers__Password}}"
+}
+
+### 2. A-02: Alice reads own incident (Expected: 200 OK)
+GET {{host}}/api/incidents/{{aliceIncidentId}}
+Accept: application/json
+
+### 3. A-03 (PoC IDOR/BOLA): Alice reads Bob's incident (Vulnerable: 200 OK, Fixed: 404 Not Found)
+GET {{host}}/api/incidents/{{bobIncidentId}}
+Accept: application/json
+
+### 4. A-04: Alice tries to update Bob's incident (Fixed: 404 Not Found)
+PUT {{host}}/api/incidents/{{bobIncidentId}}
+Content-Type: application/json
+
+{
+  "title": "Hacked by Alice",
+  "description": "Attempt to modify foreign incident description.",
+  "severity": "Low"
+}
+
+### 5. A-06 & A-09: Alice (Reporter) tries privileged triage (Fixed: 403 Forbidden + audit log)
+POST {{host}}/api/incidents/{{aliceNewIncidentId}}/triage
+
+### 6. A-12: Alice tries to read Bob's comment directly (Fixed: 404 Not Found)
+GET {{host}}/api/incident-comments/{{bobCommentId}}
+Accept: application/json
+
+### 7. Login as Morgan (Analyst)
+POST {{host}}/api/auth/login
+Content-Type: application/json
+
+{
+  "userName": "morgan",
+  "password": "{{$processEnv SeedUsers__Password}}"
+}
+
+### 8. A-03R: Morgan (Analyst) reads Alice's incident for analysis (Expected: 200 OK)
+GET {{host}}/api/incidents/{{aliceIncidentId}}
+Accept: application/json
+
+### 9. A-07: Morgan (Analyst) performs allowed triage New -> Triaged (Expected: 204 NoContent)
+POST {{host}}/api/incidents/{{aliceNewIncidentId}}/triage
