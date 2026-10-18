@@ -10,7 +10,7 @@ POST {{host}}/api/auth/login
 Content-Type: application/json
 
 {
-  "userName": "alice",
+  "userName": "bob",
   "password": "{{$processEnv SeedUsers__Password}}"
 }
 
@@ -31,6 +31,9 @@ Content-Type: application/json
   "description": "Attempt to modify foreign incident description.",
   "severity": "Low"
 }
+
+###  Alice tries to delete Bob's incident 
+DELETE {{host}}/api/incidents/{{bobIncidentId}}
 
 ### 5. A-06 & A-09: Alice (Reporter) tries privileged triage (Fixed: 403 Forbidden + audit log)
 POST {{host}}/api/incidents/{{aliceNewIncidentId}}/triage
