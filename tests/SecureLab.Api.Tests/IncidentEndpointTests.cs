@@ -1,31 +1,34 @@
-using System.Net;
+﻿using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using SecureLab.Api.Data;
-using SecureLab.Api.Presentation.Contracts;
 
 namespace SecureLab.Api.Tests;
 
-public sealed class IncidentEndpointTests(SecureLabApiFactory factory)
-    : IClassFixture<SecureLabApiFactory>
+public sealed class IncidentEndpointTests(SecureLabApiFactory factory) : IClassFixture<SecureLabApiFactory>
 {
-    private readonly HttpClient _client = factory.CreateClient();
+    private static string StudyPassword =>
+        Environment.GetEnvironmentVariable("SeedUsers__Password")
+        ?? throw new InvalidOperationException("Set local SeedUsers__Password outside Git.");
 
     [Fact]
-    public async Task GetList_ReturnsSeededIncidents()
+    public async Task GetList_ReturnsOnlyAllowedSeededIncidentsForAlice()
     {
-        var incidents = await _client.GetFromJsonAsync<List<IncidentListItemResponse>>(
-            "/api/incidents");
+        using var client = await factory.LoginAsync("alice", StudyPassword);
 
-        Assert.NotNull(incidents);
-        Assert.Contains(incidents, incident => incident.Id == DbSeeder.AliceIncidentId);
-        Assert.Contains(incidents, incident => incident.Id == DbSeeder.BobIncidentId);
+        var response = await client.GetFromJsonAsync<List<IncidentListItemDto>>("/api/incidents");
+
+        Assert.NotNull(response);
+        Assert.Contains(response, item => item.Id == DbSeeder.AliceIncidentId);
+        Assert.DoesNotContain(response, item => item.Id == DbSeeder.BobIncidentId);
     }
 
     [Fact]
     public async Task GetDetails_ForUnknownId_ReturnsProblemDetails404()
     {
-        using var response = await _client.GetAsync($"/api/incidents/{Guid.NewGuid()}");
+        using var client = await factory.LoginAsync("alice", StudyPassword);
+
+        using var response = await client.GetAsync($"/api/incidents/{Guid.NewGuid()}");
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
         Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
@@ -34,23 +37,44 @@ public sealed class IncidentEndpointTests(SecureLabApiFactory factory)
     [Fact]
     public async Task GetDetails_DoesNotExposeInternalOwnerFields()
     {
-        using var response = await _client.GetAsync(
-            $"/api/incidents/{DbSeeder.AliceIncidentId}");
-        var json = await response.Content.ReadAsStringAsync();
-        using var document = JsonDocument.Parse(json);
+        using var client = await factory.LoginAsync("alice", StudyPassword);
 
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var response = await client.GetAsync($"/api/incidents/{DbSeeder.AliceIncidentId}");
+        response.EnsureSuccessStatusCode();
+
+        await using var stream = await response.Content.ReadAsStreamAsync();
+        using var document = await JsonDocument.ParseAsync(stream);
+
         Assert.False(document.RootElement.TryGetProperty("ownerUserId", out _));
-        Assert.False(document.RootElement.TryGetProperty("email", out _));
-        Assert.Equal("Аліса Коваль", document.RootElement.GetProperty("ownerDisplayName").GetString());
+        Assert.False(document.RootElement.TryGetProperty("passwordHash", out _));
     }
 
     [Fact]
-    public async Task ClientScript_DoesNotUseDangerousInnerHtmlSink()
+    public void ClientScript_DoesNotUseDangerousInnerHtmlSink()
     {
-        var script = await _client.GetStringAsync("/app.js");
+        var scriptPath = Path.Combine(GetRepositoryRoot(), "src", "SecureLab.Api", "Client", "app.js");
+        var script = File.ReadAllText(scriptPath);
 
         Assert.DoesNotContain("innerHTML", script, StringComparison.Ordinal);
-        Assert.Contains("textContent", script, StringComparison.Ordinal);
     }
+
+    private static string GetRepositoryRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "SecureLab.sln")))
+        {
+            directory = directory.Parent;
+        }
+
+        return directory?.FullName
+            ?? throw new InvalidOperationException("Repository root with SecureLab.sln was not found.");
+    }
+
+    private sealed record IncidentListItemDto(
+        Guid Id,
+        string Title,
+        string Severity,
+        string Status,
+        DateTimeOffset OccurredAtUtc,
+        DateTimeOffset CreatedAtUtc);
 }

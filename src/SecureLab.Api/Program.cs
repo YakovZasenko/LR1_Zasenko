@@ -1,3 +1,4 @@
+﻿using Microsoft.AspNetCore.Authorization;
 using System.Threading.RateLimiting;
 using SecureLab.Api.Scaffolding;
 using Microsoft.EntityFrameworkCore;
@@ -21,6 +22,7 @@ var connectionString = builder.Configuration.GetConnectionString("SecureLab")
 builder.Services.AddDbContext<SecureLabDbContext>(options =>
     options.UseNpgsql(connectionString));
 builder.Services.AddScoped<IncidentQueries>();
+builder.Services.AddScoped<IAuthorizationHandler, IncidentAuthorizationHandler>();
 
 builder.AddLab03Identity();
 
@@ -102,3 +104,4 @@ app.MapFallbackToFile("index.html");
 app.Run();
 
 public partial class Program;
+
