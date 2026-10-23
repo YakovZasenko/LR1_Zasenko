@@ -1,6 +1,11 @@
 ﻿using System.Diagnostics;
 using System.Security.Claims;
+using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Routing;
 using Microsoft.EntityFrameworkCore;
 using SecureLab.Api.Application.Incidents;
 using SecureLab.Api.Presentation.Contracts;
@@ -23,7 +28,6 @@ public static class IncidentEndpoints
         group.MapPut("/{id:guid}", UpdateAsync);
         group.MapDelete("/{id:guid}", DeleteAsync);
         group.MapPost("/{id:guid}/triage", TriageAsync);
-
         endpoints.MapGet("/api/incident-comments/{id:guid}", GetCommentAsync)
             .WithTags("Incidents")
             .RequireAuthorization();
@@ -272,5 +276,3 @@ public sealed record UpdateIncidentRequest(
     string? Title,
     string? Description,
     string? Severity);
-
-

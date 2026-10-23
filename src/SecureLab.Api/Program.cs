@@ -14,6 +14,10 @@ var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 });
 builder.Services.AddOpenApi();
 builder.Services.AddProblemDetails();
+builder.Services.AddAntiforgery(options =>
+{
+    options.HeaderName = "X-CSRF-TOKEN";
+});
 
 var connectionString = builder.Configuration.GetConnectionString("SecureLab")
     ?? throw new InvalidOperationException(
@@ -81,6 +85,7 @@ if (app.Environment.IsDevelopment())
 
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseAntiforgery();
 app.UseRateLimiter();
 
 app.UseDefaultFiles();
@@ -95,6 +100,12 @@ app.MapGet("/health", async (SecureLabDbContext dbContext, CancellationToken can
     .WithName("GetHealth")
     .Produces(StatusCodes.Status200OK)
     .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
+    
+app.MapGet("/api/auth/csrf-token", (Microsoft.AspNetCore.Antiforgery.IAntiforgery antiforgery, HttpContext context) =>
+{
+    var tokens = antiforgery.GetAndStoreTokens(context);
+    return Results.Ok(new { token = tokens.RequestToken });
+}); 
 
 app.MapIncidentEndpoints();
 app.MapLab03Identity();

@@ -3,9 +3,30 @@ const listStatusElement = document.querySelector("#list-status");
 const detailsElement = document.querySelector("#incident-details");
 const filterForm = document.querySelector("#filter-form");
 
+let csrfToken = null;
+
 async function apiFetch(path, options = {}) {
+  const method = (options.method || "GET").toUpperCase();
+  if (["POST", "PUT", "DELETE"].includes(method) && !csrfToken) {
+    try {
+      const tokenData = await fetch("/api/auth/csrf-token", {
+        headers: { Accept: "application/json" }
+      });
+      if (tokenData.ok) {
+        const json = await tokenData.json();
+        csrfToken = json.token;
+      }
+    } catch (e) {
+    }
+  }
+
+  const headers = { Accept: "application/json", ...options.headers };
+  if (csrfToken && ["POST", "PUT", "DELETE"].includes(method)) {
+    headers["X-CSRF-TOKEN"] = csrfToken;
+  }
+
   const response = await fetch(path, {
-    headers: { Accept: "application/json", ...options.headers },
+    headers,
     ...options,
   });
 
